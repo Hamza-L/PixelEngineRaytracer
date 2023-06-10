@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/PixelEngine.iml" filepath="$PROJECT_DIR$/.idea/PixelEngine.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/vulkanRaytracer.iml" filepath="$PROJECT_DIR$/.idea/vulkanRaytracer.iml" />
     </modules>
   </component>
 </project>

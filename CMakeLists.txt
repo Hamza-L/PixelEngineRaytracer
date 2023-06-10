@@ -69,6 +69,7 @@ add_executable(${PROJECT_NAME} ${ALL_FILES})
 # Include directories and Dependencies
 ################################################################################
 
+
 if (WIN32)
     message("Starting the Windows Build")
     set(VULKAN_SDK $ENV{VULKAN_SDK})
@@ -87,6 +88,8 @@ if (WIN32)
                 "C:/VulkanSDK/1.3.246.1/Lib"
                 "${CMAKE_CURRENT_SOURCE_DIR}/external/windows/assimp/lib/Release"
                 )
+
+                        # <--this is out-file path
 
     elseif("${CMAKE_VS_PLATFORM_NAME}" STREQUAL "x86")
         target_include_directories(${PROJECT_NAME} PUBLIC
@@ -134,7 +137,7 @@ endif ()
 target_link_libraries(${PROJECT_NAME} PRIVATE "${ADDITIONAL_LIBRARY_DEPENDENCIES}")
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/external/windows/assimp/dll/assimp-vc143-mt.dll
-        DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/cmake-build-debug)
+        DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 
 
