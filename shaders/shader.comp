@@ -1,0 +1,335 @@
+#version 450 //use glsl 4.5
+
+#define FLT_MAX 3.402823466e+38
+#define FLT_MIN 1.175494351e-38
+#define DBL_MAX 1.7976931348623158e+308
+#define DBL_MIN 2.2250738585072014e-308
+
+layout(local_size_x = 32, local_size_y = 24, local_size_z = 1) in;
+layout(binding = 0, rgba8) uniform image2D inputImage;
+layout(binding = 1, rgba8) uniform image2D outputImage;
+layout(binding = 2, rgba8) uniform image2D customImage;
+
+layout(push_constant) uniform PObj
+{
+    vec3 cameraPos;
+    float fov;
+    vec3 randomOffsets;
+    float focus;
+    vec3 lightPos;
+    float intensity;
+    vec4 lightColor;
+    uint currentSample;
+    uint mouseCoordX;
+    uint mouseCoordY;
+    uint outlineEnabled;
+} pushObj;
+
+struct Sphere {
+    vec3 center;
+    float radius;
+    float metal_factor;
+    vec3 color;
+};
+
+struct Checkerboard{
+    vec3 origin;
+    vec3 normal;
+    vec3 color1;
+    vec3 color2;
+    float metal_factor;
+};
+
+struct Camera {
+    vec3 position;
+    vec3 forwards;
+    vec3 right;
+    vec3 up;
+};
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Light{
+    vec3 origin;
+};
+
+struct HitData{
+    vec3 normal;
+    float t;
+    float metal_factor;
+    bool isHit;
+    vec3 position;
+    vec3 color;
+};
+
+HitData hit(Ray ray, Sphere sphere);
+HitData hit(Ray ray, Checkerboard plane);
+HitData minHit(HitData hit1, HitData hit2){
+    if(hit1.isHit && !hit2.isHit)
+    {
+        return hit1;
+    } else if(!hit1.isHit && hit2.isHit)
+    {
+        return hit2;
+    }
+    return hit1.t < hit2.t ? hit1 : hit2;
+}
+
+vec3 bling_Phong_compute(vec3 color, vec3 lightPos, vec3 pointPosition, vec3 normal, vec3 viewerPos){
+
+    vec3 lightDirection = normalize(lightPos - pointPosition );
+    vec3 viewDirection = normalize(viewerPos - pointPosition );
+    vec3 halfVector = normalize( lightDirection + viewDirection);
+
+    float diffuse = max(0.0f,dot( normal.xyz, lightDirection));
+    float specular = max(0.0f,dot( normal.xyz, halfVector ) );
+
+    if (diffuse == 0.0) {
+        specular = 0.0;
+    } else {
+        specular = pow( specular, 32.0f );
+    }
+
+    vec3 albedo = color;
+
+    vec3 scatteredLight =  albedo * diffuse;
+    vec3 reflectedLight = pushObj.lightColor.xyz * specular;
+    vec3 ambientLight = albedo.xyz * 0.08f;
+
+    //outColor = vec4(normalForFP.xyz,1.0f);
+
+    vec3 outColor = vec3(min( ambientLight + scatteredLight + reflectedLight, vec3(1,1,1)));
+
+    return outColor;
+}
+
+void main() {
+
+    ivec2 screen_pos = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+    ivec2 screen_size = imageSize(outputImage);
+
+    Sphere sphere1;
+    sphere1.center = vec3(0.0, 0.0, -3.0);
+    sphere1.radius = 1.0;
+    sphere1.color = vec3(1.0, 0.0, 0.0f);
+    sphere1.metal_factor = 0.5f;
+
+    Sphere sphere2;
+    sphere2.center = vec3(2.0, 1.0, -8.0);
+    sphere2.radius = 2.0;
+    sphere2.color = vec3(1.0, 0.3, 0.0);
+    sphere2.metal_factor = 0.5f;
+
+    Sphere sphere3;
+    sphere3.center = vec3(-2.0, -0.5, -1.0);
+    sphere3.radius = 0.5;
+    sphere3.color = vec3(0.0, 0.5, 1.0);
+    sphere3.metal_factor = 0.5f;
+
+    Checkerboard plane;
+    plane.normal = vec3(0.0f,1.0f,0.0f);
+    plane.origin = vec3(0.0f,-1.0f,-5.0f);
+    plane.color1 = vec3(0.0f,1.0f,0.0f);
+    plane.color2 = vec3(0.0f,0.0f,1.0f);
+    plane.metal_factor = 0.0f;
+
+    vec3 lookat = vec3(0.0f, 0.0f, -3.0f);
+
+    Camera camera;
+    camera.position = pushObj.cameraPos;
+    camera.forwards = normalize(lookat - camera.position);
+    camera.right = cross(camera.forwards, vec3(0.0f,1.0f,0.0f));
+    camera.up = cross(camera.forwards, -camera.right);
+
+    float horizontalCoefficient = tan(radians(pushObj.fov)) * (float(pushObj.mouseCoordX) * 2 - screen_size.x) / screen_size.x;
+    float verticalCoefficient = -tan(radians(pushObj.fov)) * (float(pushObj.mouseCoordY) * 2 - screen_size.y) / screen_size.x;
+
+    Ray mouseRay;
+    mouseRay.origin = camera.position;
+    mouseRay.direction = camera.forwards + horizontalCoefficient * camera.right + verticalCoefficient * camera.up;
+
+    HitData mouseHitData1, mouseHitData2, mouseHitData3;
+    mouseHitData1 = hit(mouseRay, sphere1);
+    mouseHitData2 = hit(mouseRay, sphere2);
+    mouseHitData3 = hit(mouseRay, sphere3);
+
+    HitData finalMouseHit = minHit(mouseHitData1, mouseHitData2);
+    finalMouseHit = minHit(finalMouseHit, mouseHitData3);
+
+    //ivec2 screen_pos = ivec2(pushObj.cameraPos.x, pushObj.cameraPos.y);
+    horizontalCoefficient = tan(radians(pushObj.fov)) * (float(screen_pos.x) * 2 - screen_size.x) / screen_size.x;
+    verticalCoefficient = -tan(radians(pushObj.fov)) * (float(screen_pos.y) * 2 - screen_size.y) / screen_size.x;
+
+    vec3 pixel_color = vec3(0.1);
+    vec4 customTexPixel = vec4(0.0f);
+
+    //vec3 lookat = vec3(0.0f, 0.0f, -3.0f);
+
+
+    float scale = pushObj.focus / length(lookat - pushObj.cameraPos);
+    lookat = pushObj.cameraPos + scale * (lookat - pushObj.cameraPos);
+
+    camera.position = pushObj.cameraPos + vec3(pushObj.randomOffsets.x, pushObj.randomOffsets.y, 0.0f);
+    camera.forwards = normalize(lookat - camera.position);
+    camera.right = cross(camera.forwards, vec3(0.0f,1.0f,0.0f));
+    camera.up = cross(camera.forwards, -camera.right);
+
+    Ray ray;
+    ray.origin = camera.position;
+    ray.direction = camera.forwards + horizontalCoefficient * camera.right + verticalCoefficient * camera.up;
+
+    Light light;
+    light.origin = pushObj.lightPos;
+
+    HitData currentHitData1 = hit(ray, sphere1);
+    HitData currentHitData3 = hit(ray, sphere2);
+    HitData currentHitData4 = hit(ray, sphere3);
+    HitData currentHitData2 = hit(ray, plane);
+
+    if (currentHitData2.isHit || currentHitData1.isHit || currentHitData3.isHit || currentHitData3.isHit) {
+        HitData finalHit = minHit(currentHitData1, currentHitData2);
+        finalHit = minHit(finalHit, currentHitData3);
+        finalHit = minHit(finalHit, currentHitData4);
+
+        HitData finalLightHit;
+        Ray lightRay1;
+        lightRay1.origin = light.origin;
+        lightRay1.direction = normalize(finalHit.position - light.origin);
+
+        finalLightHit = minHit(hit(lightRay1, sphere1), hit(lightRay1, sphere2));
+        finalLightHit = minHit(finalLightHit, hit(lightRay1, sphere3));
+
+        if(!finalLightHit.isHit || length(finalLightHit.position - finalHit.position) <= 0.001f)
+        {
+            vec3 bounceColor = vec3(0.1f);
+            Ray bounceRay1;
+            bounceRay1.origin = finalLightHit.position;
+            vec3 incidentDirection = normalize(finalLightHit.position - camera.position);
+            bounceRay1.direction = normalize(reflect(incidentDirection, finalLightHit.normal));
+            HitData finalBounceLightHit = hit(bounceRay1, plane);
+            if(finalBounceLightHit.isHit)
+            {
+                bounceColor = bling_Phong_compute(finalBounceLightHit.color, light.origin, finalBounceLightHit.position, finalBounceLightHit.normal, camera.position);
+            }
+
+            pixel_color = sqrt(1.0f-finalHit.metal_factor) * bling_Phong_compute(finalHit.color, light.origin, finalHit.position, finalHit.normal, camera.position) + (finalHit.metal_factor) * bounceColor;
+
+        } else
+        {
+            pixel_color = vec3(0.05,0.05,0.05);
+        }
+
+        //pixel_color = currentHitData2.normal;
+    }
+
+    camera.position = pushObj.cameraPos;
+    camera.forwards = normalize(lookat - camera.position);
+    camera.right = cross(camera.forwards, vec3(0.0f,1.0f,0.0f));
+    camera.up = cross(camera.forwards, -camera.right);
+
+    horizontalCoefficient = tan(radians(pushObj.fov)) * (float(pushObj.mouseCoordX) * 2 - screen_size.x) / screen_size.x;
+    verticalCoefficient = -tan(radians(pushObj.fov)) * (float(pushObj.mouseCoordY) * 2 - screen_size.y) / screen_size.x;
+
+    //Ray mouseRay;
+    mouseRay.origin = camera.position;
+    mouseRay.direction = camera.forwards + horizontalCoefficient * camera.right + verticalCoefficient * camera.up;
+
+    horizontalCoefficient = tan(radians(pushObj.fov)) * (float(screen_pos.x) * 2 - screen_size.x) / screen_size.x;
+    verticalCoefficient = -tan(radians(pushObj.fov)) * (float(screen_pos.y) * 2 - screen_size.y) / screen_size.x;
+
+    Ray rayCustom;
+    rayCustom.origin = camera.position;
+    rayCustom.direction = camera.forwards + horizontalCoefficient * camera.right + verticalCoefficient * camera.up;
+
+    HitData customHitData1, customHitData2, customHitData3;
+
+    customHitData1 = hit(rayCustom, sphere1);
+    customHitData2 = hit(rayCustom, sphere2);
+    customHitData3 = hit(rayCustom, sphere3);
+
+    mouseHitData1 = hit(mouseRay, sphere1);
+    mouseHitData2 = hit(mouseRay, sphere2);
+    mouseHitData3 = hit(mouseRay, sphere3);
+
+    finalMouseHit = minHit(mouseHitData1, mouseHitData2);
+    finalMouseHit = minHit(finalMouseHit, mouseHitData3);
+
+    if ((customHitData1.isHit || customHitData2.isHit || customHitData3.isHit) && finalMouseHit.isHit) {
+        HitData finalCustomHit = minHit(customHitData1, customHitData2);
+        finalCustomHit = minHit(finalCustomHit, customHitData3);
+
+        if(finalCustomHit.color == finalMouseHit.color)
+        {
+            customTexPixel = dot(finalCustomHit.normal, rayCustom.direction) >= -0.2 && pushObj.outlineEnabled > 0 ? vec4(1.0f,1.0f,1.0f,1.0f) : vec4(0.0f,0.0f,0.0f,0.0f);
+        }
+    }
+
+    //pixel_color = vec3(1.0,1.0,0.0);
+    vec3 init_pixel = imageLoad(inputImage, screen_pos).rgb * min(pushObj.currentSample, 1.0);
+
+    pixel_color = customTexPixel.w > 0.0f ? customTexPixel.xyz : (pixel_color + init_pixel * (pushObj.currentSample)) / (pushObj.currentSample + 1.0);
+    //pixel_color = (pixel_color + init_pixel * (pushObj.currentSample)) / (pushObj.currentSample + 1.0);
+    //pixel_color = pixel_color;
+
+    imageStore(outputImage, screen_pos, vec4(pixel_color, 1.0));
+    imageStore(customImage, screen_pos, customTexPixel);
+    //imageStore(outputImage, ivec2(screen_pos.x, screen_pos.y), vec4(1.0f,1.0f,1.0f, 1.0));
+}
+
+HitData hit(Ray ray, Sphere sphere) {
+
+    float a = dot(ray.direction, ray.direction);
+    float b = 2.0 * dot(ray.direction, ray.origin - sphere.center);
+    float c = dot(ray.origin - sphere.center, ray.origin - sphere.center) - sphere.radius * sphere.radius;
+    float discriminant = b*b - 4.0*a*c;
+    float t =  (-b - sqrt(b*b - 4*a*c)) / (2*a);
+    vec3 position = ray.origin + t * ray.direction;
+    vec3 normal = normalize(position - sphere.center);
+
+    HitData data;
+    data.isHit = discriminant > 0;
+    data.position = position;
+    data.normal = normal;
+    data.t = t >= 0 ? t : FLT_MAX;;
+    data.color = sphere.color;
+    data.metal_factor = sphere.metal_factor;
+
+    return data;
+}
+
+HitData hit(Ray ray, Checkerboard plane)
+{
+    HitData data;
+
+    // assuming vectors are all normalized
+    float denom = dot(-plane.normal, ray.direction);
+    if (denom > 1e-6) {
+        vec3 p0l0 = plane.origin - ray.origin;
+        float t = dot(p0l0, -plane.normal) / denom;
+
+        data.isHit = (t >= 0);
+        data.normal = plane.normal;
+        data.position = ray.origin + t * ray.direction;
+        data.t = t > 0 ? t : 0;
+
+
+        float temp_z = mod(floor(data.position.z), 2) < 1 ? 1 : 0;
+        float temp_x = mod(floor(data.position.x + temp_z), 2);
+        if(temp_x == 0)
+        {
+            data.color = plane.color1;
+        } else
+        {
+            data.color = plane.color2;
+        }
+        return data;
+    }
+
+    data.isHit = false;
+    data.t = FLT_MAX;
+    data.metal_factor = plane.metal_factor;
+    return data;
+}
